@@ -12,6 +12,15 @@ require('dotenv').config();
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// Ensure required directories exist
+const dirs = ['./data', './uploads'];
+dirs.forEach(dir => {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+});
+
 const db = new Database('./data/dnd-ai.db');
 
 // In-memory store for active context caches to reduce costs
