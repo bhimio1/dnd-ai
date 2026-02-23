@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Download, FileText, X, Loader2 as LoaderIcon } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Download, X, Loader2 as LoaderIcon } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { marked } from 'marked';
@@ -21,7 +21,7 @@ interface Props {
   onClose: () => void;
 }
 
-export function DocumentExporter({ campaignId, documents: allCampaignDocuments, onClose }: Props) {
+export function DocumentExporter({ documents: allCampaignDocuments, onClose }: Props) {
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<number[]>([]);
   const [exportTitles, setExportTitles] = useState<Record<number, string>>({});
   const [exportFormat, setExportFormat] = useState<'pdf' | 'md' | 'html' | 'docx'>('pdf');
@@ -76,7 +76,7 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
               <style>
                 @page { 
                   size: A4; 
-                  margin: 0; /* Let body padding handle margins */
+                  margin: 0;
                 }
                 body { 
                   margin: 0;
@@ -157,7 +157,7 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
                   border: 0; 
                   border-top: 1px solid rgba(0,0,0,0.1);
                   margin: 3em 0; 
-                  page-break-after: always; /* Force new page at doc separator */
+                  page-break-after: always;
                 }
                 pre, code {
                   background: rgba(0,0,0,0.05);
@@ -177,7 +177,7 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
         setTimeout(() => {
           printWindow.print();
           printWindow.close();
-        }, 750); // Increased delay for font loading
+        }, 750);
       }
     } else if (exportFormat === 'md') {
       const blob = new Blob([markdownToExport], { type: 'text/markdown' });
@@ -212,7 +212,6 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
     <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4">
       <div className="bg-neutral-900 border-2 border-neutral-800 rounded-[1.5rem] w-full max-w-xl shadow-[0_0_50px_rgba(0,0,0,0.5)] flex flex-col max-h-[85vh] overflow-hidden">
         
-        {/* Header */}
         <div className="p-5 border-b border-neutral-800 flex justify-between items-center shrink-0">
           <div className="flex items-center gap-3">
             <div className="bg-dnd-red/20 p-2 rounded-xl">
@@ -228,10 +227,8 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
           </button>
         </div>
 
-        {/* Scrollable Area */}
         <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
           <div className="space-y-6">
-            {/* Filename & Format Selection */}
             <div className="grid grid-cols-1 gap-6">
               <div className="space-y-2">
                 <label className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Final Filename</label>
@@ -261,7 +258,6 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
               </div>
             </div>
 
-            {/* Document Picker */}
             <div className="space-y-3">
               <label className="text-[9px] font-black text-neutral-500 uppercase tracking-[0.2em]">Select & Name Chronicles</label>
               <div className="grid gap-2">
@@ -291,7 +287,6 @@ export function DocumentExporter({ campaignId, documents: allCampaignDocuments, 
               </div>
             </div>
 
-            {/* THE DOWNLOAD BUTTON */}
             <div className="pt-4 pb-10">
               <button 
                 onClick={handleDownloadExport}

@@ -1,12 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { History, FileText, Download, Check, X, Loader2 as LoaderIcon, ScrollText } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { useState, useEffect } from 'react';
+import { History, FileText, Loader2 as LoaderIcon, ScrollText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 interface HistoryEntry {
   id: number;
@@ -17,7 +11,7 @@ interface HistoryEntry {
 interface Props {
   documentId: number;
   onClose: () => void;
-  onRestore: (content: string) => void;
+  onRestore: (historyId: number) => void;
 }
 
 export function DocumentHistory({ documentId, onClose, onRestore }: Props) {
@@ -91,7 +85,7 @@ export function DocumentHistory({ documentId, onClose, onRestore }: Props) {
                     </div>
                     <p className="text-[10px] text-neutral-500 uppercase tracking-widest">{formatTimestamp(entry.created_at)}</p>
                     <button 
-                      onClick={() => onRestore(entry.id.toString())} // Pass ID, then fetch content in parent for restore
+                      onClick={() => onRestore(entry.id)} 
                       className="bg-dnd-red/10 hover:bg-dnd-red/20 text-dnd-red text-xs px-3 py-1 rounded-lg flex items-center gap-1 transition mt-2"
                     >
                       <History size={14} /> Restore
@@ -116,7 +110,7 @@ export function DocumentHistory({ documentId, onClose, onRestore }: Props) {
                 <p className="text-neutral-500 italic">Loading preview...</p>
               </div>
             ) : previewContent ? (
-              <div className="homebrewery-preview homebrewery-preview-small"> {/* Added a class to reduce size slightly */}
+              <div className="homebrewery-preview homebrewery-preview-small">
                 <ReactMarkdown>{previewContent}</ReactMarkdown>
               </div>
             ) : (

@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { 
   Plus, Save, ArrowLeft, Send, Sparkles, 
-  Settings, Trash, FileUp, List, FileText, ChevronRight,
-  Maximize2, Minimize2, Book, Sword, Wand2, Shield, Scroll, Download,
+  Settings, Trash, List, FileText, 
+  Wand2, Shield, Download,
   Library, Loader2 as LoaderIcon, History, Pencil
 } from 'lucide-react';
 import type { Campaign } from '../App';
@@ -31,12 +31,17 @@ interface Props {
   onBack: () => void;
 }
 
+interface ChatMessage {
+  role: 'user' | 'ai';
+  text: string;
+}
+
 export function LoreEditor({ campaign, onBack }: Props) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [activeDoc, setActiveDoc] = useState<Document | null>(null);
   const [markdown, setMarkdown] = useState('');
-  const [chat, setChat] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
+  const [chat, setChat] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
@@ -77,7 +82,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
     fetchDocs();
     fetchSources();
 
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (_event: MouseEvent) => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) { // No text selected
         setShowCanonizeButton(false);
@@ -240,14 +245,6 @@ export function LoreEditor({ campaign, onBack }: Props) {
       }
     };
   
-    const handleCanonizeAll = () => {
-      const lastAiResponse = chat.findLast(msg => msg.role === 'ai');
-      if (lastAiResponse) {
-        canonize(lastAiResponse.text, lastAiResponse.text);
-      } else {
-        alert('No AI response available to canonize.');
-      }
-    };    
   const handleRenameDoc = async () => {
     if (!activeDoc || !newDocTitle.trim()) return;
     await fetch(`http://localhost:3001/api/documents/${activeDoc.id}/rename`, {
@@ -260,26 +257,15 @@ export function LoreEditor({ campaign, onBack }: Props) {
     setIsRenamingDoc(false);
   };
     
-      const handleDeleteDoc = async () => {
-        if (!activeDoc || !window.confirm(`Are you sure you want to delete "${activeDoc.title}"? This cannot be undone.`)) return;
-        await fetch(`http://localhost:3001/api/documents/${activeDoc.id}`, {
-          method: 'DELETE',
-        });
-        setMarkdown('');
-        setActiveDoc(null);
-        fetchDocs();
-        setHasUnsavedChanges(false); // No active doc, no unsaved changes
-      };
-    
-        const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-          if (!e.target.files?.[0]) return;
-          const formData = new FormData();
-          formData.append('pdf', e.target.files[0]);
-          await fetch(`http://localhost:3001/api/campaigns/${campaign.id}/upload`, {
-            method: 'POST',
-            body: formData,
+        const handleDeleteDoc = async () => {
+          if (!activeDoc || !window.confirm(`Are you sure you want to delete "${activeDoc.title}"? This cannot be undone.`)) return;
+          await fetch(`http://localhost:3001/api/documents/${activeDoc.id}`, {
+            method: 'DELETE',
           });
-          alert('Source book added to campaign context!');
+          setMarkdown('');
+          setActiveDoc(null);
+          fetchDocs();
+          setHasUnsavedChanges(false); // No active doc, no unsaved changes
         };
       
         const handleRestoreVersion = async (historyId: number) => {
@@ -288,8 +274,9 @@ export function LoreEditor({ campaign, onBack }: Props) {
           setMarkdown(data.content);
           setHasUnsavedChanges(true); // Restored version counts as unsaved until explicitly saved
           setShowHistoryModal(false);
-        };    
-      return (
+        };
+      
+        return (
     <div className="flex h-full w-full bg-neutral-950">
       {/* Sidebar */}
       <div className={cn("bg-neutral-900 border-r border-neutral-800 flex flex-col transition-all duration-300 shadow-2xl z-20", showSidebar ? "w-72" : "w-0 overflow-hidden")}>
@@ -515,11 +502,15 @@ export function LoreEditor({ campaign, onBack }: Props) {
                   key={i} 
                   className={cn("flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300", msg.role === 'user' ? "items-end" : "items-start")}
                   ref={el => { if (msg.role === 'ai') chatMessageRefs.current[i] = el; }}
-                  onMouseUp={(e) => {
+                  onMouseUp={(_e) => {
                     if (msg.role === 'ai') {
                       const selection = window.getSelection();
-                      const selectedText = selection?.toString().trim();
-                      if (selectedText && selectedText.length > 5 && selection?.rangeCount > 0) {
+                      if (!selection) {
+                        setShowCanonizeButton(false);
+                        return;
+                      }
+                      const selectedText = selection.toString().trim();
+                      if (selectedText && selectedText.length > 5 && selection.rangeCount > 0) {
                         const range = selection.getRangeAt(0);
                         const rect = range.getBoundingClientRect();
                         

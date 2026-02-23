@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { LoreEditor } from './components/LoreEditor';
 import { CampaignList } from './components/CampaignList';
 

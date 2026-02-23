@@ -1,11 +1,5 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { AlertTriangle, Trash2, X, Loader2 as LoaderIcon } from 'lucide-react';
-import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
 
 interface Props {
   campaignId: number;

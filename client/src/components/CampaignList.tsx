@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, BookOpen, Settings, Map, Swords, ScrollText, Trash2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Plus, Settings, Map, Swords, Trash2, ScrollText } from 'lucide-react';
 import type { Campaign } from '../App';
 import { DeleteCampaignModal } from './DeleteCampaignModal';
 
