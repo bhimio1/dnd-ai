@@ -1,0 +1,35 @@
+# Dependency directories
+node_modules/
+client/node_modules/
+
+# Environment variables
+.env
+
+# Database
+data/*.db
+data/*.db-journal
+
+# Uploads
+uploads/*
+!uploads/.gitkeep
+
+# Build directories
+client/dist/
+
+# Logs
+*.log
+server.log
+client.log
+server_debug.log
+
+# Process IDs
+*.pid
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Temporary/Test scripts
+list-models.js
+test-pdf.js
+probe-models.js
