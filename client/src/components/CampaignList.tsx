@@ -1,3 +1,4 @@
+import { DEFAULT_LORE_MARKDOWN } from '../constants/defaultLore';
 import { useState, useEffect } from 'react';
 import { Plus, Settings, Map, Swords, Trash2, ScrollText } from 'lucide-react';
 import type { Campaign } from '../App';
@@ -35,7 +36,7 @@ export function CampaignList({ onSelectCampaign }: Props) {
     await fetch(`/api/campaigns/${campaignId}/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Overview', content: '# Campaign Overview\n\nWelcome to your new chronicle. Start by defining the world, the stakes, and the heroes.' }),
+      body: JSON.stringify({ title: 'Overview', content: DEFAULT_LORE_MARKDOWN }),
     });
 
     setCampaigns([...campaigns, { ...newCampaign, id: campaignId, sourceCount: 0 }]);
