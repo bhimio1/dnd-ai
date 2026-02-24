@@ -11,6 +11,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const { Document, Packer, Paragraph, TextRun } = require('docx');
 require('dotenv').config();
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -492,9 +493,9 @@ Instructions:
 
     if (sourceBooks.length > 0 && !activeCaches.has(cacheKey)) {
       try {
-        console.log('Attempting to create context cache with gemini-2.5-flash-lite...');
+        console.log(`Attempting to create context cache with ${GEMINI_MODEL}...`);
         const cache = await cacheManager.create({
-          model: 'models/gemini-2.5-flash-lite',
+          model: `models/${GEMINI_MODEL}`,
           displayName: `Lore_Context_${campaignId}`,
           contents: [
             {
@@ -516,10 +517,10 @@ Instructions:
     if (activeCaches.has(cacheKey)) {
       model = genAI.getGenerativeModelFromCachedContent({ 
         name: activeCaches.get(cacheKey).name,
-        model: 'models/gemini-2.5-flash-lite'
+        model: `models/${GEMINI_MODEL}`
       });
     } else {
-      model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+      model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     }
 
     const parts = [
@@ -546,7 +547,7 @@ app.post('/api/canonize', async (req, res) => {
   const { selection, fullResponse, documentContent, campaignId } = req.body;
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     
     const prompt = `You are a Professional D&D Book Editor.
 You have access to custom Homebrewery-style markdown blocks for formatting D&D content.
