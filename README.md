@@ -38,19 +38,20 @@ An immersive, AI-powered campaign management tool for Dungeon Masters, featuring
 
 ### Running the Application
 
-You will need to start both the backend and the frontend.
-
-**Terminal 1 (Backend):**
+### Development Mode (Local Editing)
+Starts both servers with live-reload. Use this for testing changes.
 ```bash
-node server/index.js
+npm run dev
 ```
+Access at `http://localhost:5173`.
 
-**Terminal 2 (Frontend):**
-```bash
-cd client && npm run dev
-```
+### Production Mode (Home Server)
+The preferred way to run on your server. The backend serves the UI.
+1. **Build:** `npm run build`
+2. **Start:** `PORT=80 npm start` (Use `sudo` if on port 80)
+Access at `http://your-server-ip`.
 
-The application will be accessible at `http://localhost:5173`.
+**NOTE:** If you see "localhost:3001" errors in your browser after updating, perform a **Hard Refresh (Ctrl+F5)** to clear old cached files.
 
 ## Production Run (Home Server)
 
