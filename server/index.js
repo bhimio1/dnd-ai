@@ -5,6 +5,8 @@ const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { GoogleAIFileManager, GoogleAICacheManager } = require('@google/generative-ai/server');
 const pdf = require('pdf-parse');
+const mammoth = require('mammoth');
+const TurndownService = require('turndown');
 const fs = require('fs');
 const Database = require('better-sqlite3');
 const { Document, Packer, Paragraph, TextRun } = require('docx');
@@ -61,6 +63,7 @@ db.exec(`
     file_path TEXT,
     text_content TEXT,
     file_uri TEXT,
+    mime_type TEXT DEFAULT 'application/pdf',
     FOREIGN KEY (campaign_id) REFERENCES campaigns (id)
   );
 
@@ -70,6 +73,7 @@ db.exec(`
     file_path TEXT,
     text_content TEXT,
     file_uri TEXT,
+    mime_type TEXT DEFAULT 'application/pdf',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -80,6 +84,20 @@ db.exec(`
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 `);
+
+// Migration for existing tables if mime_type is missing
+try {
+  const tableInfo = db.prepare('PRAGMA table_info(source_books)').all();
+  if (!tableInfo.some(col => col.name === 'mime_type')) {
+    db.prepare('ALTER TABLE source_books ADD COLUMN mime_type TEXT DEFAULT "application/pdf"').run();
+  }
+  const globalTableInfo = db.prepare('PRAGMA table_info(global_sources)').all();
+  if (!globalTableInfo.some(col => col.name === 'mime_type')) {
+    db.prepare('ALTER TABLE global_sources ADD COLUMN mime_type TEXT DEFAULT "application/pdf"').run();
+  }
+} catch (e) {
+  console.log('Migration check skipped or failed:', e.message);
+}
 
 // Middleware
 app.use(cors());
@@ -93,6 +111,90 @@ app.use(express.static(path.join(__dirname, '../client/dist')));
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
 const cacheManager = new GoogleAICacheManager(process.env.GEMINI_API_KEY);
+const turndownService = new TurndownService();
+
+// Helper: Process Uploaded File
+async function processUploadedFile(file) {
+  const { mimetype, path: filePath, originalname } = file;
+  let text = '';
+  let finalUri = '';
+  let finalMimeType = mimetype;
+  let tempFilePath = null;
+
+  console.log(`Processing file: ${originalname} (${mimetype})`);
+
+  try {
+    if (mimetype === 'application/pdf') {
+      const dataBuffer = fs.readFileSync(filePath);
+      const data = await pdf(dataBuffer);
+      text = data.text;
+
+      const uploadResponse = await fileManager.uploadFile(filePath, {
+        mimeType: mimetype,
+        displayName: originalname,
+      });
+      finalUri = uploadResponse.file.uri;
+
+    } else if (
+      mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+      originalname.toLowerCase().endsWith('.docx')
+    ) {
+      // Parse DOCX to HTML then Markdown
+      const result = await mammoth.convertToHtml({ path: filePath });
+      text = turndownService.turndown(result.value);
+
+      // Create temp MD file for upload
+      tempFilePath = filePath + '.md';
+      fs.writeFileSync(tempFilePath, text);
+
+      finalMimeType = 'text/markdown';
+      const uploadResponse = await fileManager.uploadFile(tempFilePath, {
+        mimeType: finalMimeType,
+        displayName: originalname.replace('.docx', '.md'),
+      });
+      finalUri = uploadResponse.file.uri;
+
+    } else if (
+      mimetype === 'text/markdown' ||
+      mimetype === 'text/x-markdown' ||
+      originalname.toLowerCase().endsWith('.md')
+    ) {
+      text = fs.readFileSync(filePath, 'utf8');
+      finalMimeType = 'text/markdown';
+
+      const uploadResponse = await fileManager.uploadFile(filePath, {
+        mimeType: finalMimeType,
+        displayName: originalname,
+      });
+      finalUri = uploadResponse.file.uri;
+
+    } else if (
+      mimetype === 'text/plain' ||
+      originalname.toLowerCase().endsWith('.txt') ||
+      mimetype === 'application/json' ||
+      originalname.toLowerCase().endsWith('.json')
+    ) {
+      text = fs.readFileSync(filePath, 'utf8');
+      finalMimeType = 'text/plain'; // Treat JSON as plain text for Gemini context
+
+      const uploadResponse = await fileManager.uploadFile(filePath, {
+        mimeType: finalMimeType,
+        displayName: originalname,
+      });
+      finalUri = uploadResponse.file.uri;
+
+    } else {
+      throw new Error(`Unsupported file type: ${mimetype}`);
+    }
+  } finally {
+    // Cleanup generated temp file if it exists
+    if (tempFilePath && fs.existsSync(tempFilePath)) {
+      try { fs.unlinkSync(tempFilePath); } catch(e) { console.error('Failed to clean temp file:', e); }
+    }
+  }
+
+  return { text, uri: finalUri, mimeType: finalMimeType };
+}
 
 // Routes
 app.get('/api/campaigns', (req, res) => {
@@ -122,32 +224,28 @@ app.put('/api/campaigns/:id/rename', (req, res) => {
 app.delete('/api/campaigns/:id', (req, res) => {
   const campaignId = req.params.id;
 
-  // 1. Idempotency Check: Verify existence
+  // 1. Idempotency Check
   const campaign = db.prepare('SELECT name FROM campaigns WHERE id = ?').get(campaignId);
   if (!campaign) {
     return res.status(200).json({ success: true, message: 'Campaign already deleted or does not exist.' });
   }
 
   const deleteTransaction = db.transaction(() => {
-    // 2. Fetch associated source files for disk cleanup
+    // 2. Cleanup files
     const sources = db.prepare('SELECT file_path FROM source_books WHERE campaign_id = ?').all(campaignId);
     for (const source of sources) {
       if (fs.existsSync(source.file_path)) {
-        try {
-          fs.unlinkSync(source.file_path);
-        } catch (err) {
-          console.error(`Failed to delete file ${source.file_path}:`, err);
-        }
+        try { fs.unlinkSync(source.file_path); } catch (err) { console.error(err); }
       }
     }
 
-    // 3. Delete from database in order of dependencies
+    // 3. Delete DB records
     db.prepare('DELETE FROM source_books WHERE campaign_id = ?').run(campaignId);
     db.prepare('DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE campaign_id = ?)').run(campaignId);
     db.prepare('DELETE FROM documents WHERE campaign_id = ?').run(campaignId);
     db.prepare('DELETE FROM campaigns WHERE id = ?').run(campaignId);
 
-    // 4. Audit Logging
+    // 4. Audit
     db.prepare('INSERT INTO audit_logs (action, details) VALUES (?, ?)').run(
       'DELETE_CAMPAIGN', 
       `Campaign "${campaign.name}" (ID: ${campaignId}) was deleted.`
@@ -177,8 +275,6 @@ app.delete('/api/sources/:id', async (req, res) => {
   const source = db.prepare('SELECT * FROM source_books WHERE id = ?').get(req.params.id);
   if (!source) return res.status(404).json({ error: 'Source not found' });
   
-  // Optional: Delete from Gemini File API? 
-  // For now, just clean database and local file.
   if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
   db.prepare('DELETE FROM source_books WHERE id = ?').run(req.params.id);
   res.json({ success: true });
@@ -199,11 +295,8 @@ app.put('/api/documents/:id', (req, res) => {
   const { content } = req.body;
   const current = db.prepare('SELECT content, version FROM documents WHERE id = ?').get(req.params.id);
   
-  // Save history
-  // Check current history count
   const historyCount = db.prepare('SELECT COUNT(*) FROM document_history WHERE document_id = ?').get(req.params.id);
   if (historyCount['COUNT(*)'] >= 20) {
-    // Find and delete the oldest history entry
     const oldestHistory = db.prepare('SELECT id FROM document_history WHERE document_id = ? ORDER BY created_at ASC LIMIT 1').get(req.params.id);
     if (oldestHistory) {
       db.prepare('DELETE FROM document_history WHERE id = ?').run(oldestHistory.id);
@@ -211,7 +304,6 @@ app.put('/api/documents/:id', (req, res) => {
   }
   db.prepare('INSERT INTO document_history (document_id, content, version) VALUES (?, ?, ?)').run(req.params.id, current.content, current.version);
   
-  // Update document
   db.prepare('UPDATE documents SET content = ?, version = version + 1 WHERE id = ?').run(content, req.params.id);
   res.json({ success: true });
 });
@@ -224,7 +316,7 @@ app.put('/api/documents/:id/rename', (req, res) => {
 
 app.delete('/api/documents/:id', (req, res) => {
   const docId = req.params.id;
-  db.prepare('DELETE FROM document_history WHERE document_id = ?').run(docId); // Delete history first
+  db.prepare('DELETE FROM document_history WHERE document_id = ?').run(docId);
   db.prepare('DELETE FROM documents WHERE id = ?').run(docId);
   res.json({ success: true });
 });
@@ -242,16 +334,17 @@ app.get('/api/document_history/:id', (req, res) => {
   res.json(historyEntry);
 });
 
-// The "catchall" handler: for any request that doesn't
-// match one above, send back React's index.html file.
-app.use((req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    next();
+  } else {
+    res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+  }
 });
 
 app.post('/api/export-docx', async (req, res) => {
   const { markdown, filename = 'export' } = req.body;
 
-  // Basic Markdown to DOCX conversion
   const doc = new Document({
     sections: [{
       children: markdown.split('\n').map(line => {
@@ -263,20 +356,20 @@ app.post('/api/export-docx', async (req, res) => {
           return new Paragraph({ text: line.substring(2), heading: 'Heading1' });
         } else if (line.startsWith('---')) {
             return new Paragraph({ text: '', thematicBreak: true });
-        } else if (line.startsWith('**') && line.endsWith('**')) { // Basic bold
+        } else if (line.startsWith('**') && line.endsWith('**')) {
             return new Paragraph({
                 children: [
                     new TextRun({ text: line.substring(2, line.length - 2), bold: true }),
                 ],
             });
-        } else if (line.startsWith('*') && line.endsWith('*')) { // Basic italic
+        } else if (line.startsWith('*') && line.endsWith('*')) {
             return new Paragraph({
                 children: [
                     new TextRun({ text: line.substring(1, line.length - 1), italic: true }),
                 ],
             });
         } else if (line.trim() === '') {
-          return new Paragraph({ text: '' }); // Empty paragraph for newlines
+          return new Paragraph({ text: '' });
         }
         return new Paragraph({ text: line });
       }),
@@ -293,32 +386,28 @@ app.post('/api/export-docx', async (req, res) => {
   }
 });
 
-// Global Sources API
 app.get('/api/global-sources', (req, res) => {
   const sources = db.prepare('SELECT id, name, created_at FROM global_sources ORDER BY created_at DESC').all();
   res.json(sources);
 });
 
 app.post('/api/global-sources/upload', upload.single('pdf'), async (req, res) => {
-  const { originalname, path: filePath, mimetype } = req.file;
-  const dataBuffer = fs.readFileSync(filePath);
+  const { originalname, path: filePath } = req.file;
   
   try {
-    const data = await pdf(dataBuffer); // Local parse for search/preview
-    const uploadResponse = await fileManager.uploadFile(filePath, {
-      mimeType: mimetype || 'application/pdf',
-      displayName: originalname,
-    });
+    const { text, uri, mimeType } = await processUploadedFile(req.file);
     
-    db.prepare('INSERT INTO global_sources (name, file_path, text_content, file_uri) VALUES (?, ?, ?, ?)').run(
-      originalname, filePath, data.text, uploadResponse.file.uri
+    db.prepare('INSERT INTO global_sources (name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?)').run(
+      originalname, filePath, text, uri, mimeType
     );
-    res.json({ success: true, uri: uploadResponse.file.uri });
+    res.json({ success: true, uri: uri });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to upload global source' });
+    res.status(500).json({ error: 'Failed to upload global source', details: err.message });
   } finally {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath); // Clean up temp file
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch(e) { console.error('Failed to clean upload:', e); }
+    }
   }
 });
 
@@ -326,54 +415,46 @@ app.delete('/api/global-sources/:id', async (req, res) => {
   const source = db.prepare('SELECT file_path, file_uri FROM global_sources WHERE id = ?').get(req.params.id);
   if (!source) return res.status(404).json({ error: 'Global source not found' });
   
-  // Optional: Delete from Gemini File API here if file_uri is unique and not used elsewhere
-  // For now, just clean database and local file.
   if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
   db.prepare('DELETE FROM global_sources WHERE id = ?').run(req.params.id);
-  // Also remove from campaign source_books if linked
   db.prepare('DELETE FROM source_books WHERE file_uri = ?').run(source.file_uri);
   res.json({ success: true });
 });
 
 app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) => {
   const { campaignId, globalSourceId } = req.params;
-  const globalSource = db.prepare('SELECT name, file_path, text_content, file_uri FROM global_sources WHERE id = ?').get(globalSourceId);
+  const globalSource = db.prepare('SELECT name, file_path, text_content, file_uri, mime_type FROM global_sources WHERE id = ?').get(globalSourceId);
 
   if (!globalSource) return res.status(404).json({ error: 'Global source not found' });
 
-  // Check if already assigned
   const existing = db.prepare('SELECT id FROM source_books WHERE campaign_id = ? AND file_uri = ?').get(campaignId, globalSource.file_uri);
   if (existing) return res.status(409).json({ error: 'Source already assigned to this campaign' });
 
-  db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri) VALUES (?, ?, ?, ?, ?)').run(
-    campaignId, globalSource.name, globalSource.file_path, globalSource.text_content, globalSource.file_uri
+  db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
+    campaignId, globalSource.name, globalSource.file_path, globalSource.text_content, globalSource.file_uri, globalSource.mime_type
   );
   res.json({ success: true });
 });
 
 
 app.post('/api/campaigns/:id/upload', upload.single('pdf'), async (req, res) => {
-  const { originalname, path: filePath, mimetype } = req.file;
-  const dataBuffer = fs.readFileSync(filePath);
+  const { originalname, path: filePath } = req.file;
   
   try {
-    // 1. Parse text locally (for potential search)
-    const data = await pdf(dataBuffer);
+    const { text, uri, mimeType } = await processUploadedFile(req.file);
     
-    // 2. Upload to Gemini File API
-    const uploadResponse = await fileManager.uploadFile(filePath, {
-      mimeType: mimetype || 'application/pdf',
-      displayName: originalname,
-    });
-    
-    db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri) VALUES (?, ?, ?, ?, ?)').run(
-      req.params.id, originalname, filePath, data.text, uploadResponse.file.uri
+    db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
+      req.params.id, originalname, filePath, text, uri, mimeType
     );
     
-    res.json({ success: true, text: data.text, uri: uploadResponse.file.uri });
+    res.json({ success: true, text: text, uri: uri });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to process file' });
+    res.status(500).json({ error: 'Failed to process file', details: err.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) {
+      try { fs.unlinkSync(req.file.path); } catch(e) { console.error('Failed to clean upload:', e); }
+    }
   }
 });
 
@@ -381,10 +462,9 @@ app.post('/api/chat', async (req, res) => {
   const { message, campaignId, documentId, documentContent } = req.body;
   
   try {
-    const sourceBooks = db.prepare('SELECT file_uri FROM source_books WHERE campaign_id = ?').all(campaignId);
+    const sourceBooks = db.prepare('SELECT file_uri, mime_type FROM source_books WHERE campaign_id = ?').all(campaignId);
     const cacheKey = `campaign-${campaignId}-${sourceBooks.map(s => s.file_uri).sort().join('-')}`;
     
-    // System instruction
     const systemInstruction = `You are a D&D Campaign Assistant.
 The document currently being edited:
 """
@@ -398,7 +478,6 @@ Instructions:
 
     let model;
     
-    // Explicit Cache Management
     if (activeCaches.has(cacheKey) && Date.now() > activeCaches.get(cacheKey).expiresAt) {
        try { await cacheManager.delete(activeCaches.get(cacheKey).name); } catch(e) {}
        activeCaches.delete(cacheKey);
@@ -414,7 +493,7 @@ Instructions:
             {
               role: 'user',
               parts: sourceBooks.map(s => ({
-                fileData: { mimeType: 'application/pdf', fileUri: s.file_uri }
+                fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
               }))
             }
           ],
@@ -439,7 +518,7 @@ Instructions:
     const parts = [
       { text: systemInstruction },
       ...(!activeCaches.has(cacheKey) ? sourceBooks.map(s => ({
-        fileData: { mimeType: "application/pdf", fileUri: s.file_uri }
+        fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
       })) : []),
       { text: `User says: ${message}` }
     ];
