@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import remarkGfm from 'remark-gfm';
+import remarkDirective from 'remark-directive';
+import remarkHomebrewery from '../plugins/remarkHomebrewery';
+import '../styles/homebrewery.css';
 import { 
   Plus, Save, ArrowLeft, Send, Sparkles, 
   Settings, Trash, List, FileText, 
@@ -15,9 +19,21 @@ import { DocumentExporter } from './DocumentExporter';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
+
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
+
+const preprocessHomebrewery = (markdown: string) => {
+  if (!markdown) return '';
+  return markdown.replace(
+    /\{\{([a-zA-Z0-9_-]+)(?:,([^\n]*?))?\n([\s\S]*?)\n\}\}/gm,
+    (_match, type, args, content) => {
+      const attributes = args ? ` {args="${args}"}` : '';
+      return `:::${type}${attributes}\n${content}\n:::`;
+    }
+  );
+};
 
 interface Document {
   id: number;
@@ -475,7 +491,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
                     }
                   }}
                 >
-                  {markdown}
+                  {preprocessHomebrewery(markdown)}
                 </ReactMarkdown>
               </div>
             </div>
@@ -561,7 +577,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
                         <div className="absolute -top-3 left-3 bg-dnd-red/20 text-dnd-red border border-dnd-red/30 px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest">
                           Lore Engine
                         </div>
-                        <div className="whitespace-pre-wrap font-solway"><ReactMarkdown>{msg.text}</ReactMarkdown></div>
+                        <div className="whitespace-pre-wrap font-solway"><ReactMarkdown remarkPlugins={[remarkGfm, remarkDirective, remarkHomebrewery]}>{preprocessHomebrewery(msg.text)}</ReactMarkdown></div>
                         <div className="flex gap-2 mt-3 items-start">
                           <button 
                             onClick={() => canonize(msg.text, msg.text)} // Pass full message for selection and response

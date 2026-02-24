@@ -466,6 +466,13 @@ app.post('/api/chat', async (req, res) => {
     const cacheKey = `campaign-${campaignId}-${sourceBooks.map(s => s.file_uri).sort().join('-')}`;
     
     const systemInstruction = `You are a D&D Campaign Assistant.
+You have access to custom Homebrewery-style markdown blocks for formatting D&D content.
+Use the following syntax:
+- Monster/NPC Stat Block: {{monster,frame ... }}
+- Note Box (Green): {{note ... }}
+- Descriptive Box (Fancy): {{descriptive ... }}
+- Tables: Use standard Markdown tables.
+
 The document currently being edited:
 """
 ${documentContent}
@@ -542,6 +549,13 @@ app.post('/api/canonize', async (req, res) => {
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" });
     
     const prompt = `You are a Professional D&D Book Editor.
+You have access to custom Homebrewery-style markdown blocks for formatting D&D content.
+Use the following syntax:
+- Monster/NPC Stat Block: {{monster,frame ... }}
+- Note Box (Green): {{note ... }}
+- Descriptive Box (Fancy): {{descriptive ... }}
+- Tables: Use standard Markdown tables.
+
 Your task is to seamlessly integrate a specific "Lore Selection" into an existing D&D document.
 
 --- EXISTING DOCUMENT ---
