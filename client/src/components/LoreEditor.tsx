@@ -63,7 +63,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
   const chatMessageRefs = useRef<Array<HTMLDivElement | null>>([]);
 
   const fetchDocs = async () => {
-    const res = await fetch(`http://localhost:3001/api/campaigns/${campaign.id}/documents`);
+    const res = await fetch(`/api/campaigns/${campaign.id}/documents`);
     const data = await res.json();
     setDocuments(data);
     // If no active doc and we have documents, select the first one (Overview)
@@ -73,7 +73,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
   };
 
   const fetchSources = async () => {
-    const res = await fetch(`http://localhost:3001/api/campaigns/${campaign.id}/sources`);
+    const res = await fetch(`/api/campaigns/${campaign.id}/sources`);
     const data = await res.json();
     setSources(data);
   };
@@ -158,7 +158,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
 
   const saveDoc = async () => {
     if (!activeDoc) return;
-    await fetch(`http://localhost:3001/api/documents/${activeDoc.id}`, {
+    await fetch(`/api/documents/${activeDoc.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content: markdown }),
@@ -172,7 +172,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
     const title = window.prompt('Enter a title for your new chronicle document:', 'New Document');
     if (title === null) return; // User cancelled
 
-    const res = await fetch(`http://localhost:3001/api/campaigns/${campaign.id}/documents`, {
+    const res = await fetch(`/api/campaigns/${campaign.id}/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: title || 'New Document', content: `# ${title || 'New Lore Entry'}\n\nStart your chronicle here...` }),
@@ -189,7 +189,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
     setInput('');
     setIsAiLoading(true);
 
-    const res = await fetch('http://localhost:3001/api/chat', {
+    const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -214,7 +214,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
       setShowCanonizeButton(false); // Hide the button immediately
       
       try {
-        const res = await fetch('http://localhost:3001/api/canonize', {
+        const res = await fetch('/api/canonize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -230,7 +230,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
           setMarkdown(data.updatedContent);
           // Automatically save the "canonized" version
           if (activeDoc) {
-            await fetch(`http://localhost:3001/api/documents/${activeDoc.id}`, {
+            await fetch(`/api/documents/${activeDoc.id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ content: data.updatedContent }),
@@ -247,7 +247,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
   
   const handleRenameDoc = async () => {
     if (!activeDoc || !newDocTitle.trim()) return;
-    await fetch(`http://localhost:3001/api/documents/${activeDoc.id}/rename`, {
+    await fetch(`/api/documents/${activeDoc.id}/rename`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: newDocTitle }),
@@ -259,7 +259,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
     
         const handleDeleteDoc = async () => {
           if (!activeDoc || !window.confirm(`Are you sure you want to delete "${activeDoc.title}"? This cannot be undone.`)) return;
-          await fetch(`http://localhost:3001/api/documents/${activeDoc.id}`, {
+          await fetch(`/api/documents/${activeDoc.id}`, {
             method: 'DELETE',
           });
           setMarkdown('');
@@ -269,7 +269,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
         };
       
         const handleRestoreVersion = async (historyId: number) => {
-          const res = await fetch(`http://localhost:3001/api/document_history/${historyId}`);
+          const res = await fetch(`/api/document_history/${historyId}`);
           const data = await res.json();
           setMarkdown(data.content);
           setHasUnsavedChanges(true); // Restored version counts as unsaved until explicitly saved

@@ -22,7 +22,7 @@ export function DocumentHistory({ documentId, onClose, onRestore }: Props) {
 
   const fetchHistory = async () => {
     setIsLoading(true);
-    const res = await fetch(`http://localhost:3001/api/documents/${documentId}/history`);
+    const res = await fetch(`/api/documents/${documentId}/history`);
     const data = await res.json();
     setHistory(data);
     setIsLoading(false);
@@ -35,7 +35,7 @@ export function DocumentHistory({ documentId, onClose, onRestore }: Props) {
   const fetchPreview = async (historyId: number) => {
     setLoadingPreview(true);
     setPreviewContent(null);
-    const res = await fetch(`http://localhost:3001/api/document_history/${historyId}`);
+    const res = await fetch(`/api/document_history/${historyId}`);
     const data = await res.json();
     setPreviewContent(data.content);
     setLoadingPreview(false);

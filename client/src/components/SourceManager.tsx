@@ -28,14 +28,14 @@ export function SourceManager({ campaignId, onClose, onUpdate }: Props) {
 
   const fetchSources = async () => {
     setIsLoading(true);
-    const res = await fetch(`http://localhost:3001/api/campaigns/${campaignId}/sources`);
+    const res = await fetch(`/api/campaigns/${campaignId}/sources`);
     const data = await res.json();
     setSources(data);
     setIsLoading(false);
   };
 
   const fetchGlobalSources = async () => {
-    const res = await fetch(`http://localhost:3001/api/global-sources`);
+    const res = await fetch(`/api/global-sources`);
     const data = await res.json();
     setGlobalSources(data);
   };
@@ -52,7 +52,7 @@ export function SourceManager({ campaignId, onClose, onUpdate }: Props) {
     formData.append('pdf', e.target.files[0]);
     
     try {
-      const endpoint = uploadToGlobal ? 'http://localhost:3001/api/global-sources/upload' : `http://localhost:3001/api/campaigns/${campaignId}/upload`;
+      const endpoint = uploadToGlobal ? '/api/global-sources/upload' : `/api/campaigns/${campaignId}/upload`;
       await fetch(endpoint, {
         method: 'POST',
         body: formData,
@@ -72,14 +72,14 @@ export function SourceManager({ campaignId, onClose, onUpdate }: Props) {
 
   const handleDeleteSource = async (id: number) => {
     if (!confirm('Are you sure you want to remove this source from your campaign context?')) return;
-    await fetch(`http://localhost:3001/api/sources/${id}`, { method: 'DELETE' });
+    await fetch(`/api/sources/${id}`, { method: 'DELETE' });
     fetchSources();
     onUpdate?.();
   };
 
   const handleDeleteGlobalSource = async (id: number, name: string) => {
     if (!confirm(`Are you sure you want to delete "${name}" from the global library? This will also unassign it from any campaigns.`)) return;
-    await fetch(`http://localhost:3001/api/global-sources/${id}`, { method: 'DELETE' });
+    await fetch(`/api/global-sources/${id}`, { method: 'DELETE' });
     fetchGlobalSources();
     fetchSources(); // Re-fetch campaign sources in case any were linked
     onUpdate?.(); // Notify parent of potential campaign source update
@@ -88,7 +88,7 @@ export function SourceManager({ campaignId, onClose, onUpdate }: Props) {
   const handleAssignGlobalSource = async (globalSourceId: number, name: string) => {
     if (!confirm(`Assign "${name}" to this campaign?`)) return;
     try {
-      const res = await fetch(`http://localhost:3001/api/campaigns/${campaignId}/assign-source/${globalSourceId}`, { method: 'POST' });
+      const res = await fetch(`/api/campaigns/${campaignId}/assign-source/${globalSourceId}`, { method: 'POST' });
       if (!res.ok) {
         const errorData = await res.json();
         throw new Error(errorData.error || 'Failed to assign source');

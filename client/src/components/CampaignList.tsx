@@ -16,14 +16,14 @@ export function CampaignList({ onSelectCampaign }: Props) {
   const [campaignToDelete, setCampaignToDelete] = useState<Campaign | null>(null);
 
   useEffect(() => {
-    fetch('http://localhost:3001/api/campaigns')
+    fetch('/api/campaigns')
       .then(r => r.json())
       .then(setCampaigns);
   }, []);
 
   const addCampaign = async () => {
     if (!newCampaign.name) return;
-    const res = await fetch('http://localhost:3001/api/campaigns', {
+    const res = await fetch('/api/campaigns', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newCampaign),
@@ -32,7 +32,7 @@ export function CampaignList({ onSelectCampaign }: Props) {
     const campaignId = data.id;
 
     // Automatically create an "Overview" document for the new campaign
-    await fetch(`http://localhost:3001/api/campaigns/${campaignId}/documents`, {
+    await fetch(`/api/campaigns/${campaignId}/documents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ title: 'Overview', content: '# Campaign Overview\n\nWelcome to your new chronicle. Start by defining the world, the stakes, and the heroes.' }),
@@ -45,12 +45,12 @@ export function CampaignList({ onSelectCampaign }: Props) {
 
   const handleEditCampaign = async () => {
     if (!currentEditCampaign) return;
-    await fetch(`http://localhost:3001/api/campaigns/${currentEditCampaign.id}/rename`, {
+    await fetch(`/api/campaigns/${currentEditCampaign.id}/rename`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: currentEditCampaign.name, setting: currentEditCampaign.setting }),
     });
-    fetch('http://localhost:3001/api/campaigns') // Re-fetch all campaigns to update
+    fetch('/api/campaigns') // Re-fetch all campaigns to update
       .then(r => r.json())
       .then(setCampaigns);
     setIsEditingCampaign(false);
@@ -58,7 +58,7 @@ export function CampaignList({ onSelectCampaign }: Props) {
   };
 
   const handleDeleteCampaignSuccess = () => {
-    fetch('http://localhost:3001/api/campaigns') // Re-fetch all campaigns to update
+    fetch('/api/campaigns') // Re-fetch all campaigns to update
       .then(r => r.json())
       .then(setCampaigns);
     setCampaignToDelete(null);

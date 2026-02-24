@@ -20,7 +20,7 @@ export function DeleteCampaignModal({ campaignId, campaignName, onClose, onSucce
     setError(null);
 
     try {
-      const res = await fetch(`http://localhost:3001/api/campaigns/${campaignId}`, {
+      const res = await fetch(`/api/campaigns/${campaignId}`, {
         method: 'DELETE',
       });
       

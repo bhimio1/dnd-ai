@@ -56,7 +56,7 @@ export function DocumentExporter({ documents: allCampaignDocuments, onClose }: P
     let markdownToExport = '';
 
     for (const docId of selectedDocumentIds) {
-      const res = await fetch(`http://localhost:3001/api/documents/${docId}`);
+      const res = await fetch(`/api/documents/${docId}`);
       const fullDoc = await res.json();
       const customTitle = exportTitles[docId] || fullDoc.title;
       markdownToExport += `# ${customTitle}\n\n${fullDoc.content}\n\n---\n\n`;
@@ -192,7 +192,7 @@ export function DocumentExporter({ documents: allCampaignDocuments, onClose }: P
         link.download = `${filename}.html`;
         link.click();
     } else if (exportFormat === 'docx') {
-      const res = await fetch('http://localhost:3001/api/export-docx', {
+      const res = await fetch('/api/export-docx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ markdown: markdownToExport, filename }),
