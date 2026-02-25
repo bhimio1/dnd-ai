@@ -1,3 +1,4 @@
+import { DEFAULT_LORE_MARKDOWN } from '../constants/defaultLore';
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -56,7 +57,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [sources, setSources] = useState<any[]>([]);
   const [activeDoc, setActiveDoc] = useState<Document | null>(null);
-  const [markdown, setMarkdown] = useState('');
+  const [markdown, setMarkdown] = useState(DEFAULT_LORE_MARKDOWN);
   const [chat, setChat] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -278,7 +279,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
           await fetch(`/api/documents/${activeDoc.id}`, {
             method: 'DELETE',
           });
-          setMarkdown('');
+          setMarkdown(DEFAULT_LORE_MARKDOWN);
           setActiveDoc(null);
           fetchDocs();
           setHasUnsavedChanges(false); // No active doc, no unsaved changes
@@ -387,7 +388,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
                   }}
                 >
                   <span className="font-solway font-bold text-white text-lg tracking-tight">
-                    {activeDoc?.title || 'World Map & Overview'}
+                    {activeDoc?.title || 'LoreWeaver Syntax Guide'}
                   </span>
                   <Pencil size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
