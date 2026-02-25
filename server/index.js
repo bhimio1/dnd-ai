@@ -94,6 +94,20 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
 const cacheManager = new GoogleAICacheManager(process.env.GEMINI_API_KEY);
 
+/**
+ * Safely deletes a file from the filesystem if it exists.
+ * @param {string} filePath - The path to the file to delete.
+ */
+function safeDeleteFile(filePath) {
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch (err) {
+      console.error(`Failed to delete file ${filePath}:`, err);
+    }
+  }
+}
+
 // Routes
 app.get('/api/campaigns', (req, res) => {
   const campaigns = db.prepare(`
@@ -132,13 +146,7 @@ app.delete('/api/campaigns/:id', (req, res) => {
     // 2. Fetch associated source files for disk cleanup
     const sources = db.prepare('SELECT file_path FROM source_books WHERE campaign_id = ?').all(campaignId);
     for (const source of sources) {
-      if (fs.existsSync(source.file_path)) {
-        try {
-          fs.unlinkSync(source.file_path);
-        } catch (err) {
-          console.error(`Failed to delete file ${source.file_path}:`, err);
-        }
-      }
+      safeDeleteFile(source.file_path);
     }
 
     // 3. Delete from database in order of dependencies
@@ -179,7 +187,7 @@ app.delete('/api/sources/:id', async (req, res) => {
   
   // Optional: Delete from Gemini File API? 
   // For now, just clean database and local file.
-  if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
+  safeDeleteFile(source.file_path);
   db.prepare('DELETE FROM source_books WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
@@ -318,7 +326,7 @@ app.post('/api/global-sources/upload', upload.single('pdf'), async (req, res) =>
     console.error(err);
     res.status(500).json({ error: 'Failed to upload global source' });
   } finally {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath); // Clean up temp file
+    safeDeleteFile(filePath); // Clean up temp file
   }
 });
 
@@ -328,7 +336,7 @@ app.delete('/api/global-sources/:id', async (req, res) => {
   
   // Optional: Delete from Gemini File API here if file_uri is unique and not used elsewhere
   // For now, just clean database and local file.
-  if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
+  safeDeleteFile(source.file_path);
   db.prepare('DELETE FROM global_sources WHERE id = ?').run(req.params.id);
   // Also remove from campaign source_books if linked
   db.prepare('DELETE FROM source_books WHERE file_uri = ?').run(source.file_uri);
