@@ -10,6 +10,14 @@ const Database = require('better-sqlite3');
 const { Document, Packer, Paragraph, TextRun } = require('docx');
 require('dotenv').config();
 
+const helmet = (() => {
+  try {
+    return require('helmet');
+  } catch (e) {
+    return null;
+  }
+})();
+
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -82,6 +90,22 @@ db.exec(`
 `);
 
 // Middleware
+if (helmet) {
+  app.use(helmet());
+} else {
+  // Manual fallback if helmet is not available in the environment
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-Download-Options', 'noopen');
+    res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+    next();
+  });
+}
 app.use(cors());
 app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
