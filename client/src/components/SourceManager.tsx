@@ -7,7 +7,7 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-interface Source {
+export interface Source {
   id: number;
   name: string;
   file_uri: string;

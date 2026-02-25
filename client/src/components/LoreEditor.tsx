@@ -14,7 +14,7 @@ import {
   Library, Loader2 as LoaderIcon, History, Pencil
 } from 'lucide-react';
 import type { Campaign } from '../App';
-import { SourceManager } from './SourceManager';
+import { SourceManager, type Source } from './SourceManager';
 import { DocumentHistory } from './DocumentHistory';
 import { DocumentExporter } from './DocumentExporter';
 import { clsx, type ClassValue } from 'clsx';
@@ -55,7 +55,7 @@ interface ChatMessage {
 
 export function LoreEditor({ campaign, onBack }: Props) {
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [sources, setSources] = useState<any[]>([]);
+  const [sources, setSources] = useState<Source[]>([]);
   const [activeDoc, setActiveDoc] = useState<Document | null>(null);
   const [markdown, setMarkdown] = useState(DEFAULT_LORE_MARKDOWN);
   const [chat, setChat] = useState<ChatMessage[]>([]);
