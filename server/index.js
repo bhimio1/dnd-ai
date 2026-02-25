@@ -119,7 +119,7 @@ app.put('/api/campaigns/:id/rename', (req, res) => {
   res.json({ success: true });
 });
 
-app.delete('/api/campaigns/:id', (req, res) => {
+app.delete('/api/campaigns/:id', async (req, res) => {
   const campaignId = req.params.id;
 
   // 1. Idempotency Check: Verify existence
@@ -128,19 +128,10 @@ app.delete('/api/campaigns/:id', (req, res) => {
     return res.status(200).json({ success: true, message: 'Campaign already deleted or does not exist.' });
   }
 
-  const deleteTransaction = db.transaction(() => {
-    // 2. Fetch associated source files for disk cleanup
-    const sources = db.prepare('SELECT file_path FROM source_books WHERE campaign_id = ?').all(campaignId);
-    for (const source of sources) {
-      if (fs.existsSync(source.file_path)) {
-        try {
-          fs.unlinkSync(source.file_path);
-        } catch (err) {
-          console.error(`Failed to delete file ${source.file_path}:`, err);
-        }
-      }
-    }
+  // 2. Fetch associated source files for disk cleanup
+  const sources = db.prepare('SELECT file_path FROM source_books WHERE campaign_id = ?').all(campaignId);
 
+  const deleteTransaction = db.transaction(() => {
     // 3. Delete from database in order of dependencies
     db.prepare('DELETE FROM source_books WHERE campaign_id = ?').run(campaignId);
     db.prepare('DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE campaign_id = ?)').run(campaignId);
@@ -156,6 +147,19 @@ app.delete('/api/campaigns/:id', (req, res) => {
 
   try {
     deleteTransaction();
+
+    // 5. Cleanup files asynchronously after successful database deletion
+    if (sources.length > 0) {
+      await Promise.allSettled(sources.map(source => {
+        if (source.file_path) {
+          return fs.promises.unlink(source.file_path).catch(err => {
+            if (err.code !== 'ENOENT') console.error(`Failed to delete file ${source.file_path}:`, err);
+          });
+        }
+        return Promise.resolve();
+      }));
+    }
+
     res.json({ success: true, message: `Campaign "${campaign.name}" has been permanently removed.` });
   } catch (err) {
     console.error('Robust Deletion Failed:', err);
@@ -179,7 +183,13 @@ app.delete('/api/sources/:id', async (req, res) => {
   
   // Optional: Delete from Gemini File API? 
   // For now, just clean database and local file.
-  if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
+  if (source.file_path) {
+    try {
+      await fs.promises.unlink(source.file_path);
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error(`Failed to delete file ${source.file_path}:`, err);
+    }
+  }
   db.prepare('DELETE FROM source_books WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
@@ -301,7 +311,7 @@ app.get('/api/global-sources', (req, res) => {
 
 app.post('/api/global-sources/upload', upload.single('pdf'), async (req, res) => {
   const { originalname, path: filePath, mimetype } = req.file;
-  const dataBuffer = fs.readFileSync(filePath);
+  const dataBuffer = await fs.promises.readFile(filePath);
   
   try {
     const data = await pdf(dataBuffer); // Local parse for search/preview
@@ -318,7 +328,13 @@ app.post('/api/global-sources/upload', upload.single('pdf'), async (req, res) =>
     console.error(err);
     res.status(500).json({ error: 'Failed to upload global source' });
   } finally {
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath); // Clean up temp file
+    if (filePath) {
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (err) {
+        if (err.code !== 'ENOENT') console.error(`Failed to cleanup temp file ${filePath}:`, err);
+      }
+    }
   }
 });
 
@@ -328,7 +344,13 @@ app.delete('/api/global-sources/:id', async (req, res) => {
   
   // Optional: Delete from Gemini File API here if file_uri is unique and not used elsewhere
   // For now, just clean database and local file.
-  if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
+  if (source.file_path) {
+    try {
+      await fs.promises.unlink(source.file_path);
+    } catch (err) {
+      if (err.code !== 'ENOENT') console.error(`Failed to delete file ${source.file_path}:`, err);
+    }
+  }
   db.prepare('DELETE FROM global_sources WHERE id = ?').run(req.params.id);
   // Also remove from campaign source_books if linked
   db.prepare('DELETE FROM source_books WHERE file_uri = ?').run(source.file_uri);
@@ -354,7 +376,7 @@ app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) 
 
 app.post('/api/campaigns/:id/upload', upload.single('pdf'), async (req, res) => {
   const { originalname, path: filePath, mimetype } = req.file;
-  const dataBuffer = fs.readFileSync(filePath);
+  const dataBuffer = await fs.promises.readFile(filePath);
   
   try {
     // 1. Parse text locally (for potential search)
