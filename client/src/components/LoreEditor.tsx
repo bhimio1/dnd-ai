@@ -28,9 +28,9 @@ function cn(...inputs: ClassValue[]) {
 const preprocessHomebrewery = (markdown: string) => {
   if (!markdown) return '';
   return markdown.replace(
-    /\{\{([a-zA-Z0-9_-]+)(?:,([^\n]*?))?\n([\s\S]*?)\n\}\}/gm,
+    /\{\{\s*([a-zA-Z0-9_-]+)(?:,([^\n]*?))?[ \t]*\r?\n([\s\S]*?)\r?\n\}\}/gm,
     (_match, type, args, content) => {
-      const attributes = args ? ` {args="${args}"}` : '';
+      const attributes = args ? `{args="${args}"}` : '';
       return `:::${type}${attributes}\n${content}\n:::`;
     }
   );
@@ -472,6 +472,7 @@ export function LoreEditor({ campaign, onBack }: Props) {
             <div className={cn("flex-1 overflow-y-auto flex justify-center custom-scrollbar", viewMode === 'split' && "tome-container")}>
               <div className="homebrewery-preview">
                 <ReactMarkdown 
+                  remarkPlugins={[remarkGfm, remarkDirective, remarkHomebrewery]}
                   components={{
                     code({node, inline, className, children, ...props}: any) {
                       const match = /language-(\w+)/.exec(className || '')
