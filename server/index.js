@@ -12,6 +12,7 @@ const Database = require('better-sqlite3');
 const { Document, Packer, Paragraph, TextRun } = require('docx');
 require('dotenv').config();
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const EMBEDDING_MODEL = 'text-embedding-004';
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -84,6 +85,15 @@ db.exec(`
     details TEXT,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS embeddings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id INTEGER,
+    content TEXT,
+    embedding TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_id) REFERENCES source_books (id)
+  );
 `);
 
 // Migration for existing tables if mime_type is missing
@@ -114,6 +124,91 @@ const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
 const cacheManager = new GoogleAICacheManager(process.env.GEMINI_API_KEY);
 const turndownService = new TurndownService();
 
+// --- RAG Helper Functions ---
+
+function chunkText(text, chunkSize = 1000, overlap = 100) {
+  const chunks = [];
+  if (!text) return chunks;
+
+  let startIndex = 0;
+  while (startIndex < text.length) {
+    const endIndex = Math.min(startIndex + chunkSize, text.length);
+    chunks.push(text.slice(startIndex, endIndex));
+
+    if (endIndex === text.length) break;
+    startIndex += chunkSize - overlap;
+  }
+  return chunks;
+}
+
+async function getEmbedding(text) {
+  try {
+    const model = genAI.getGenerativeModel({ model: EMBEDDING_MODEL });
+    const result = await model.embedContent(text);
+    return result.embedding.values;
+  } catch (err) {
+    console.error("Embedding error:", err.message);
+    return null;
+  }
+}
+
+function cosineSimilarity(vecA, vecB) {
+  let dotProduct = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    magnitudeA += vecA[i] * vecA[i];
+    magnitudeB += vecB[i] * vecB[i];
+  }
+  return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
+}
+
+async function createSourceEmbeddings(sourceId, text) {
+  console.log(`Generating embeddings for source ${sourceId}...`);
+  const chunks = chunkText(text);
+  const insertStmt = db.prepare('INSERT INTO embeddings (source_id, content, embedding) VALUES (?, ?, ?)');
+
+  let count = 0;
+  for (const chunk of chunks) {
+    const embedding = await getEmbedding(chunk);
+    if (embedding) {
+      insertStmt.run(sourceId, chunk, JSON.stringify(embedding));
+      count++;
+    }
+    // Rate limit helper: sleep a bit to avoid hitting API limits aggressively
+    await new Promise(r => setTimeout(r, 200));
+  }
+  console.log(`Created ${count} embeddings for source ${sourceId}.`);
+}
+
+// --- Startup Migration: Backfill Embeddings ---
+(async () => {
+  try {
+    const sources = db.prepare(`
+      SELECT s.id, s.text_content
+      FROM source_books s
+      LEFT JOIN embeddings e ON s.id = e.source_id
+      WHERE e.id IS NULL
+    `).all();
+
+    if (sources.length > 0) {
+      console.log(`Found ${sources.length} sources missing embeddings. Starting backfill...`);
+      for (const source of sources) {
+        if (source.text_content) {
+          await createSourceEmbeddings(source.id, source.text_content);
+        } else {
+            console.warn(`Source ${source.id} has no text content, skipping.`);
+        }
+      }
+      console.log('Backfill complete.');
+    }
+  } catch (err) {
+    console.error('Migration failed:', err);
+  }
+})();
+
+
 // Helper: Process Uploaded File
 async function processUploadedFile(file) {
   const { mimetype, path: filePath, originalname } = file;
@@ -130,11 +225,8 @@ async function processUploadedFile(file) {
       const data = await pdf(dataBuffer);
       text = data.text;
 
-      const uploadResponse = await fileManager.uploadFile(filePath, {
-        mimeType: mimetype,
-        displayName: originalname,
-      });
-      finalUri = uploadResponse.file.uri;
+      // REMOVED: fileManager.uploadFile call as we are moving to RAG
+      finalUri = `local://${filePath}`; // Use a local URI scheme placeholder
 
     } else if (
       mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
@@ -149,11 +241,8 @@ async function processUploadedFile(file) {
       fs.writeFileSync(tempFilePath, text);
 
       finalMimeType = 'text/markdown';
-      const uploadResponse = await fileManager.uploadFile(tempFilePath, {
-        mimeType: finalMimeType,
-        displayName: originalname.replace('.docx', '.md'),
-      });
-      finalUri = uploadResponse.file.uri;
+       // REMOVED: fileManager.uploadFile call as we are moving to RAG
+      finalUri = `local://${tempFilePath}`;
 
     } else if (
       mimetype === 'text/markdown' ||
@@ -163,11 +252,8 @@ async function processUploadedFile(file) {
       text = fs.readFileSync(filePath, 'utf8');
       finalMimeType = 'text/markdown';
 
-      const uploadResponse = await fileManager.uploadFile(filePath, {
-        mimeType: finalMimeType,
-        displayName: originalname,
-      });
-      finalUri = uploadResponse.file.uri;
+       // REMOVED: fileManager.uploadFile call as we are moving to RAG
+      finalUri = `local://${filePath}`;
 
     } else if (
       mimetype === 'text/plain' ||
@@ -178,11 +264,8 @@ async function processUploadedFile(file) {
       text = fs.readFileSync(filePath, 'utf8');
       finalMimeType = 'text/plain'; // Treat JSON as plain text for Gemini context
 
-      const uploadResponse = await fileManager.uploadFile(filePath, {
-        mimeType: finalMimeType,
-        displayName: originalname,
-      });
-      finalUri = uploadResponse.file.uri;
+       // REMOVED: fileManager.uploadFile call as we are moving to RAG
+      finalUri = `local://${filePath}`;
 
     } else {
       throw new Error(`Unsupported file type: ${mimetype}`);
@@ -241,6 +324,9 @@ app.delete('/api/campaigns/:id', (req, res) => {
     }
 
     // 3. Delete DB records
+    // Clean up embeddings first (explicitly, though FK cascade might handle it if enabled)
+    db.prepare('DELETE FROM embeddings WHERE source_id IN (SELECT id FROM source_books WHERE campaign_id = ?)').run(campaignId);
+
     db.prepare('DELETE FROM source_books WHERE campaign_id = ?').run(campaignId);
     db.prepare('DELETE FROM document_history WHERE document_id IN (SELECT id FROM documents WHERE campaign_id = ?)').run(campaignId);
     db.prepare('DELETE FROM documents WHERE campaign_id = ?').run(campaignId);
@@ -277,6 +363,10 @@ app.delete('/api/sources/:id', async (req, res) => {
   if (!source) return res.status(404).json({ error: 'Source not found' });
   
   if (fs.existsSync(source.file_path)) fs.unlinkSync(source.file_path);
+
+  // Cleanup embeddings
+  db.prepare('DELETE FROM embeddings WHERE source_id = ?').run(req.params.id);
+
   db.prepare('DELETE FROM source_books WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
@@ -422,7 +512,7 @@ app.delete('/api/global-sources/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) => {
+app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', async (req, res) => {
   const { campaignId, globalSourceId } = req.params;
   const globalSource = db.prepare('SELECT name, file_path, text_content, file_uri, mime_type FROM global_sources WHERE id = ?').get(globalSourceId);
 
@@ -431,9 +521,16 @@ app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) 
   const existing = db.prepare('SELECT id FROM source_books WHERE campaign_id = ? AND file_uri = ?').get(campaignId, globalSource.file_uri);
   if (existing) return res.status(409).json({ error: 'Source already assigned to this campaign' });
 
-  db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
+  const result = db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
     campaignId, globalSource.name, globalSource.file_path, globalSource.text_content, globalSource.file_uri, globalSource.mime_type
   );
+
+  // Create embeddings for the newly assigned source
+  // We use the text_content already in the global source
+  createSourceEmbeddings(result.lastInsertRowid, globalSource.text_content).catch(err => {
+      console.error('Background embedding generation failed for assigned source:', err);
+  });
+
   res.json({ success: true });
 });
 
@@ -444,9 +541,14 @@ app.post('/api/campaigns/:id/upload', upload.single('pdf'), async (req, res) => 
   try {
     const { text, uri, mimeType } = await processUploadedFile(req.file);
     
-    db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
+    const result = db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
       req.params.id, originalname, filePath, text, uri, mimeType
     );
+
+    // Create embeddings for the new source
+    createSourceEmbeddings(result.lastInsertRowid, text).catch(err => {
+      console.error('Background embedding generation failed for uploaded source:', err);
+    });
     
     res.json({ success: true, text: text, uri: uri });
   } catch (err) {
@@ -463,9 +565,6 @@ app.post('/api/chat', async (req, res) => {
   const { message, campaignId, documentId, documentContent } = req.body;
   
   try {
-    const sourceBooks = db.prepare('SELECT file_uri, mime_type FROM source_books WHERE campaign_id = ?').all(campaignId);
-    const cacheKey = `campaign-${campaignId}-${sourceBooks.map(s => s.file_uri).sort().join('-')}`;
-    
     const systemInstruction = `You are a D&D Campaign Assistant.
 You have access to custom Homebrewery-style markdown blocks for formatting D&D content.
 Use the following syntax:
@@ -482,52 +581,44 @@ ${documentContent}
 Instructions:
 1. Brainstorm lore using the attached sources and current document.
 2. Maintain consistency.
-3. Provide Markdown if asked to "canonize" or "add".`;
+3. Provide Markdown if asked to "canonize" or "add".
+4. Use the provided context chunks to answer the user's request.`;
 
-    let model;
+    // 1. Generate embedding for user query
+    const userEmbedding = await getEmbedding(message);
     
-    if (activeCaches.has(cacheKey) && Date.now() > activeCaches.get(cacheKey).expiresAt) {
-       try { await cacheManager.delete(activeCaches.get(cacheKey).name); } catch(e) {}
-       activeCaches.delete(cacheKey);
+    // 2. Retrieve relevant chunks (RAG)
+    let contextChunks = [];
+    if (userEmbedding) {
+      // Get all embeddings for this campaign's sources
+      const rows = db.prepare(`
+        SELECT e.content, e.embedding
+        FROM embeddings e
+        JOIN source_books s ON e.source_id = s.id
+        WHERE s.campaign_id = ?
+      `).all(campaignId);
+
+      // Rank by similarity
+      const ranked = rows.map(row => ({
+        content: row.content,
+        similarity: cosineSimilarity(userEmbedding, JSON.parse(row.embedding))
+      })).sort((a, b) => b.similarity - a.similarity);
+
+      // Select top K chunks (e.g., Top 5)
+      contextChunks = ranked.slice(0, 5).map(r => r.content);
+      console.log(`RAG: Retrieved ${contextChunks.length} chunks for query.`);
     }
 
-    if (sourceBooks.length > 0 && !activeCaches.has(cacheKey)) {
-      try {
-        console.log(`Attempting to create context cache with ${GEMINI_MODEL}...`);
-        const cache = await cacheManager.create({
-          model: `models/${GEMINI_MODEL}`,
-          displayName: `Lore_Context_${campaignId}`,
-          contents: [
-            {
-              role: 'user',
-              parts: sourceBooks.map(s => ({
-                fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
-              }))
-            }
-          ],
-          ttlSeconds: 3600,
-        });
-        activeCaches.set(cacheKey, { name: cache.name, expiresAt: Date.now() + 3500 * 1000 });
-        console.log('Cache created:', cache.name);
-      } catch (e) {
-        console.log('Explicit caching skipped:', e.message);
-      }
-    }
+    // 3. Construct Prompt
+    const contextText = contextChunks.length > 0
+      ? `--- RELEVANT SOURCE MATERIAL ---\n${contextChunks.join('\n\n')}\n----------------------------------\n`
+      : '';
 
-    if (activeCaches.has(cacheKey)) {
-      model = genAI.getGenerativeModelFromCachedContent({ 
-        name: activeCaches.get(cacheKey).name,
-        model: `models/${GEMINI_MODEL}`
-      });
-    } else {
-      model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    }
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
     const parts = [
       { text: systemInstruction },
-      ...(!activeCaches.has(cacheKey) ? sourceBooks.map(s => ({
-        fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
-      })) : []),
+      { text: contextText },
       { text: `User says: ${message}` }
     ];
 
