@@ -43,9 +43,12 @@ export default function remarkHomebrewery() {
             // Handle standard class attribute if present
             if (attributes.class) className += ' ' + attributes.class;
 
+            // Remove class from attributes to avoid conflict or duplication if we set it manually
+            const { class: _c, args: _a, ...otherAttributes } = attributes;
+
             data.hProperties = {
-                className: className,
-                ...attributes
+                className: className.trim().split(/\s+/),
+                ...otherAttributes
             };
         }
       }
