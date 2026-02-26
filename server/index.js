@@ -1,3 +1,4 @@
+const QuivrClient = require('./quivr');
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
@@ -12,6 +13,7 @@ const Database = require('better-sqlite3');
 const { Document, Packer, Paragraph, TextRun } = require('docx');
 require('dotenv').config();
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const quivrClient = new QuivrClient(process.env.QUIVR_API_KEY, process.env.QUIVR_URL);
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -86,6 +88,7 @@ db.exec(`
   );
 `);
 
+try { db.prepare('ALTER TABLE campaigns ADD COLUMN quivr_brain_id TEXT').run(); } catch (e) { } try { db.prepare('ALTER TABLE campaigns ADD COLUMN quivr_chat_id TEXT').run(); } catch (e) { }
 // Migration for existing tables if mime_type is missing
 try {
   const tableInfo = db.prepare('PRAGMA table_info(source_books)').all();
@@ -405,13 +408,8 @@ app.post('/api/global-sources/upload', upload.single('pdf'), async (req, res) =>
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to upload global source', details: err.message });
-  } finally {
-    if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch(e) { console.error('Failed to clean upload:', e); }
-    }
   }
 });
-
 app.delete('/api/global-sources/:id', async (req, res) => {
   const source = db.prepare('SELECT file_path, file_uri FROM global_sources WHERE id = ?').get(req.params.id);
   if (!source) return res.status(404).json({ error: 'Global source not found' });
@@ -422,11 +420,15 @@ app.delete('/api/global-sources/:id', async (req, res) => {
   res.json({ success: true });
 });
 
-app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) => {
+app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', async (req, res) => {
   const { campaignId, globalSourceId } = req.params;
   const globalSource = db.prepare('SELECT name, file_path, text_content, file_uri, mime_type FROM global_sources WHERE id = ?').get(globalSourceId);
 
   if (!globalSource) return res.status(404).json({ error: 'Global source not found' });
+
+  if (!fs.existsSync(globalSource.file_path)) {
+     console.warn(`File missing at ${globalSource.file_path}, skipping Quivr upload`);
+  }
 
   const existing = db.prepare('SELECT id FROM source_books WHERE campaign_id = ? AND file_uri = ?').get(campaignId, globalSource.file_uri);
   if (existing) return res.status(409).json({ error: 'Source already assigned to this campaign' });
@@ -434,10 +436,26 @@ app.post('/api/campaigns/:campaignId/assign-source/:globalSourceId', (req, res) 
   db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
     campaignId, globalSource.name, globalSource.file_path, globalSource.text_content, globalSource.file_uri, globalSource.mime_type
   );
+
+  if (fs.existsSync(globalSource.file_path)) {
+    let campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campaignId);
+    if (campaign) {
+      if (!campaign.quivr_brain_id) {
+        console.log(`Creating Brain for campaign ${campaign.name}`);
+        const brain = await quivrClient.createBrain(campaign.name);
+        db.prepare('UPDATE campaigns SET quivr_brain_id = ? WHERE id = ?').run(brain.id, campaignId);
+        campaign.quivr_brain_id = brain.id;
+      }
+      try {
+        await quivrClient.uploadFile(campaign.quivr_brain_id, globalSource.file_path, globalSource.mime_type);
+      } catch (quivrErr) {
+        console.error('Quivr upload failed:', quivrErr.message);
+      }
+    }
+  }
+
   res.json({ success: true });
 });
-
-
 app.post('/api/campaigns/:id/upload', upload.single('pdf'), async (req, res) => {
   const { originalname, path: filePath } = req.file;
   
@@ -447,102 +465,61 @@ app.post('/api/campaigns/:id/upload', upload.single('pdf'), async (req, res) => 
     db.prepare('INSERT INTO source_books (campaign_id, name, file_path, text_content, file_uri, mime_type) VALUES (?, ?, ?, ?, ?, ?)').run(
       req.params.id, originalname, filePath, text, uri, mimeType
     );
+
+    const campaignId = req.params.id;
+    let campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campaignId);
+    if (campaign) {
+      if (!campaign.quivr_brain_id) {
+        console.log(`Creating Brain for campaign ${campaign.name}`);
+        const brain = await quivrClient.createBrain(campaign.name);
+        db.prepare('UPDATE campaigns SET quivr_brain_id = ? WHERE id = ?').run(brain.id, campaignId);
+        campaign.quivr_brain_id = brain.id;
+      }
+      try {
+        await quivrClient.uploadFile(campaign.quivr_brain_id, filePath, mimeType);
+      } catch (quivrErr) {
+        console.error('Quivr upload failed:', quivrErr.message);
+      }
+    }
     
     res.json({ success: true, text: text, uri: uri });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to process file', details: err.message });
-  } finally {
-    if (req.file && fs.existsSync(req.file.path)) {
-      try { fs.unlinkSync(req.file.path); } catch(e) { console.error('Failed to clean upload:', e); }
-    }
   }
+  // File is kept for future reference or re-upload if needed (e.g. assigning to another campaign if copied)
 });
-
 app.post('/api/chat', async (req, res) => {
-  const { message, campaignId, documentId, documentContent } = req.body;
+  const { message, campaignId } = req.body;
   
   try {
-    const sourceBooks = db.prepare('SELECT file_uri, mime_type FROM source_books WHERE campaign_id = ?').all(campaignId);
-    const cacheKey = `campaign-${campaignId}-${sourceBooks.map(s => s.file_uri).sort().join('-')}`;
-    
-    const systemInstruction = `You are a D&D Campaign Assistant.
-You have access to custom Homebrewery-style markdown blocks for formatting D&D content.
-Use the following syntax:
-- Monster/NPC Stat Block: {{monster,frame ... }}
-- Note Box (Green): {{note ... }}
-- Descriptive Box (Fancy): {{descriptive ... }}
-- Tables: Use standard Markdown tables.
+    let campaign = db.prepare('SELECT * FROM campaigns WHERE id = ?').get(campaignId);
+    if (!campaign) return res.status(404).json({ error: 'Campaign not found' });
 
-The document currently being edited:
-"""
-${documentContent}
-"""
-
-Instructions:
-1. Brainstorm lore using the attached sources and current document.
-2. Maintain consistency.
-3. Provide Markdown if asked to "canonize" or "add".`;
-
-    let model;
-    
-    if (activeCaches.has(cacheKey) && Date.now() > activeCaches.get(cacheKey).expiresAt) {
-       try { await cacheManager.delete(activeCaches.get(cacheKey).name); } catch(e) {}
-       activeCaches.delete(cacheKey);
+    if (!campaign.quivr_brain_id) {
+      console.log(`Creating Brain for campaign ${campaign.name}`);
+      const brain = await quivrClient.createBrain(campaign.name);
+      db.prepare('UPDATE campaigns SET quivr_brain_id = ? WHERE id = ?').run(brain.id, campaignId);
+      campaign.quivr_brain_id = brain.id;
     }
 
-    if (sourceBooks.length > 0 && !activeCaches.has(cacheKey)) {
-      try {
-        console.log(`Attempting to create context cache with ${GEMINI_MODEL}...`);
-        const cache = await cacheManager.create({
-          model: `models/${GEMINI_MODEL}`,
-          displayName: `Lore_Context_${campaignId}`,
-          contents: [
-            {
-              role: 'user',
-              parts: sourceBooks.map(s => ({
-                fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
-              }))
-            }
-          ],
-          ttlSeconds: 3600,
-        });
-        activeCaches.set(cacheKey, { name: cache.name, expiresAt: Date.now() + 3500 * 1000 });
-        console.log('Cache created:', cache.name);
-      } catch (e) {
-        console.log('Explicit caching skipped:', e.message);
-      }
+    if (!campaign.quivr_chat_id) {
+       console.log(`Creating Chat for campaign ${campaign.name}`);
+       const chat = await quivrClient.createChat(`Chat for ${campaign.name}`);
+       db.prepare('UPDATE campaigns SET quivr_chat_id = ? WHERE id = ?').run(chat.chat_id, campaignId);
+       campaign.quivr_chat_id = chat.chat_id;
     }
 
-    if (activeCaches.has(cacheKey)) {
-      model = genAI.getGenerativeModelFromCachedContent({ 
-        name: activeCaches.get(cacheKey).name,
-        model: `models/${GEMINI_MODEL}`
-      });
-    } else {
-      model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-    }
+    const response = await quivrClient.chat(campaign.quivr_chat_id, message, campaign.quivr_brain_id);
+    const text = response.answer || response.assistant || response.message || (typeof response === 'string' ? response : JSON.stringify(response));
 
-    const parts = [
-      { text: systemInstruction },
-      ...(!activeCaches.has(cacheKey) ? sourceBooks.map(s => ({
-        fileData: { mimeType: s.mime_type || 'application/pdf', fileUri: s.file_uri }
-      })) : []),
-      { text: `User says: ${message}` }
-    ];
-
-    const result = await model.generateContent({
-      contents: [{ role: 'user', parts }]
-    });
-    const response = await result.response;
-    res.json({ response: response.text() });
+    res.json({ response: text });
   } catch (err) {
-    console.error('--- GEMINI ERROR ---');
+    console.error('--- QUIVR ERROR ---');
     console.error(err);
     res.status(500).json({ error: 'AI processing failed', details: err.message });
   }
 });
-
 app.post('/api/canonize', async (req, res) => {
   const { selection, fullResponse, documentContent, campaignId } = req.body;
 
